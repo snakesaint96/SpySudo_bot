@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>SpyUndo Mini App</title>
+  <!-- Подключаем официальный скрипт Telegram WebApp SDK -->
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      --bg-color: var(--tg-theme-bg-color, #0f172a);
+      --text-color: var(--tg-theme-text-color, #ffffff);
+      --card-bg: rgba(255, 255, 255, 0.05);
+      --border-color: rgba(255, 255, 255, 0.1);
+    }
+    body {
+      background-color: var(--bg-color);
+      color: var(--text-color);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      margin: 0; 
+      padding: 16px; 
+      box-sizing: border-box;
+    }
+    .card {
+      background: var(--card-bg);
+      border-radius: 16px; 
+      padding: 16px; 
+      margin-bottom: 16px;
+      border: 1px solid var(--border-color);
+    }
+    .status-badge {
+      display: inline-block; 
+      padding: 4px 12px; 
+      border-radius: 20px;
+      font-size: 12px; 
+      font-weight: bold; 
+      background: #22c55e; 
+      color: #fff;
+    }
+    .btn-buy {
+      width: 100%; 
+      padding: 14px; 
+      border: none; 
+      border-radius: 12px;
+      background: #3b82f6; 
+      color: white; 
+      font-weight: bold; 
+      font-size: 16px;
+      cursor: pointer; 
+      margin-top: 10px;
+    }
+    .msg-item {
+      padding: 12px 0; 
+      border-bottom: 1px solid var(--border-color);
+    }
+    .msg-item:last-child {
+      border-bottom: none;
+    }
+    .deleted { color: #ef4444; font-size: 12px; font-weight: bold; }
+    .edited { color: #f59e0b; font-size: 12px; font-weight: bold; }
+  </style>
+</head>
+<body>
+
+  <!-- Карточка статуса подписки / триала -->
+  <div class="card" id="subscription-card">
+    <span class="status-badge" id="sub-status">Пробный период</span>
+    <h3 id="sub-title">Осталось 3 дня</h3>
+    <p style="font-size: 14px; opacity: 0.8;">Доступ ко всем удаленным и измененным сообщениям.</p>
+    <button class="btn-buy" id="pay-btn" onclick="buySubscription()">Купить подписку за ⭐️ 250 Stars</button>
+  </div>
+
+  <!-- История сообщений -->
+  <h2>История сообщений</h2>
+  <div class="card" id="messages-list">
+    Загрузка сообщений...
+  </div>
+
+  <script>
+    const tg = window.Telegram.WebApp;
+    tg.expand(); // Разворачиваем окно на весь экран
+
+    // Замените этот URL на адрес вашего реального бэкенда (Python-сервера)
+    const BACKEND_URL = "https://your-backend-api.com";
+
+    const user = tg.initDataUnsafe?.user;
+
+    async function loadUserData() {
+      if (!user) {
+        document.getElementById('messages-list').innerHTML = '<p>Откройте приложение через Telegram бота</p>';
+        return;
+      }
+
+      try {
+        // Запрос к бэкенду за данными пользователя и списком сообщений
+        const res = await fetch(`${BACKEND_URL}/api/user-data?user_id=${user.id}`);
+        const data = await res.json();
+
+        // Управляем отображением подписки
+        if (data.is_active) {
+          document.getElementById('sub-status').innerText = 'Активна';
+          document.getElementById('sub-title').innerText = Подписка активна до ${data.expire_date};
+          document.getElementById('pay-btn').style.display = 'none';
+        } else {
+          document.getElementById('sub-title').innerText = Осталось дней триала: ${data.trial_days_left};
+        }
+
+        // Рендерим список сообщений
+        const listEl = document.getElementById('messages-list');
+        if (data.messages && data.messages.length > 0) {
+          listEl.innerHTML = data.messages.map(m => `
+            <div class="msg-item">
+              <strong>${m.sender_name}</strong>: ${m.text}
+              <div>
+                ${m.is_deleted ? '<span class="deleted">[Удалено]</span>' : ''} 
+                ${m.is_edited ? '<span class="edited">[Изменено]</span>' : ''}
+              </div>
+            </div>
+          `).join('');
+        } else {
+          listEl.innerHTML = '<p style="opacity: 0.6; margin:0;">Удаленных или измененных сообщений пока нет</p>';
+        }
+
+      } catch (err) {
+        console.error("Ошибка загрузки данных:", err);
+        document.getElementById('messages-list').innerHTML = '<p style="color: #ef4444;">Не удалось загрузить данные с сервера</p>';
+      }
+    }
+
+    // Функция покупки подписки за Telegram Stars
+    async function buySubscription() {
+      if (!user) return;
+      
+      try {
+        // 1. Просим бэкенд сгенерировать инвойс-ссылку для оплаты Звездами
+        const response = await fetch(`${BACKEND_URL}/api/create-stars-invoice`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: user.id })
+        });
+        const { invoiceLink } = await response.json();
+
+        // 2. Открываем нативную платежную форму Telegram
+        tg.openInvoice(invoiceLink, (status) => {
+          if (status === 'paid') {
+            tg.showAlert('Успешно! Подписка оплачена.');
+            loadUserData(); // Перезагружаем интерфейс
+          } else {
+            tg.showAlert('Оплата не была завершена.');
+          }
+        });
+      } catch (err) {
+        tg.showAlert('Ошибка при создании счета на оплату.');
+      }
+    }
+
+    loadUserData();
+  </script>
+</body>
+</html>
